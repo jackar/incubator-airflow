@@ -145,6 +145,69 @@ class DruidHook(BaseHook):
 
         return json.dumps(ingest_query_dict, indent=4)
 
+    def construct_index_task_ingest_query(
+            self, datasource, static_path, ts_dim, columns, metric_spec,
+            intervals, query_granularity="DAY", segment_granularity="DAY"):
+        """
+        Builds an ingest query for an S3 TSV load.
+
+        :param datasource: target datasource in druid
+        :param columns: list of all columns in the TSV, in the right order
+        """
+
+        #metric_names = [
+        #    m['fieldName'] for m in metric_spec if m['type'] != 'count']
+        #dimensions = [c for c in columns if c not in metric_names and c != ts_dim]
+
+        ingest_query_dict = {
+            "type": "index",
+            "spec": {
+                "dataSchema": {
+                    "metricsSpec": metric_spec,
+                    "granularitySpec": {
+                        "queryGranularity": query_granularity,
+                        "intervals": intervals,
+                        "type": "uniform",
+                        "segmentGranularity": segment_granularity,
+                    },
+                    "parser": {
+                        "type": "string",
+                        "parseSpec": {
+                            "columns": columns,
+                            "delimiter": "|",
+                            "dimensionsSpec": {
+                                "dimensionExclusions": [],
+                                #"dimensions": dimensions,  # list of names
+                                "spatialDimensions": []
+                            },
+                            "timestampSpec": {
+                                "column": ts_dim,
+                                "format": "millis"
+                            },
+                            "format": "tsv"
+                        }
+                    },
+                    "dataSource": datasource
+                },
+                "tuningConfig": {
+                    "type": "index",
+                    "targetPartitionSize": 0,
+                    "rowFlushBoundary": 0
+                },
+                "ioConfig": {
+                    "type": "index",
+                    "firehose": {
+                        "type": "static-s3",
+                        "uris": static_path
+                    }
+                }
+            }
+        }
+
+        print(str(json.dumps(ingest_query_dict, indent=4)))
+
+        return json.dumps(ingest_query_dict, indent=4)
+
     def send_ingest_query(
             self, datasource, static_path, ts_dim, columns, metric_spec,
             intervals, num_shards, target_partition_size, query_granularity, segment_granularity,
@@ -153,6 +216,18 @@ class DruidHook(BaseHook):
             datasource, static_path, ts_dim, columns,
             metric_spec, intervals, num_shards, target_partition_size,
             query_granularity, segment_granularity, hadoop_dependency_coordinates)
+        return self.send(query)
+
+    def send_index_task_ingest_query(
+            self, datasource, static_path, ts_dim, columns, metric_spec,
+            intervals, query_granularity, segment_granularity):
+        query = self.construct_index_task_ingest_query(
+            datasource, static_path, ts_dim, columns,
+            metric_spec, intervals, query_granularity, 
+            segment_granularity)
+        return self.send(query)
+
+    def send(self, query):
         r = requests.post(
             self.ingest_post_url, headers=self.header, data=query)
         logging.info(self.ingest_post_url)
@@ -178,6 +253,24 @@ class DruidHook(BaseHook):
             datasource, static_path, ts_dim, columns, metric_spec,
             intervals, num_shards, target_partition_size, query_granularity, segment_granularity,
             hadoop_dependency_coordinates)
+        self.poll_task(task_id)
+
+    def load_from_s3(
+            self, datasource, static_path, ts_dim, columns,
+            intervals, query_granularity, segment_granularity,
+            metric_spec=None):
+        """
+        load data to druid from s3
+
+        :param ts_dim: The column name to use as a timestamp
+        :param metric_spec: A list of dictionaries
+        """
+        task_id = self.send_index_task_ingest_query(
+            datasource, static_path, ts_dim, columns, metric_spec,
+            intervals, query_granularity, segment_granularity)
+        self.poll_task(task_id)
+
+    def poll_task(self, task_id):
         status_url = self.get_ingest_status_url(task_id)
         while True:
             r = requests.get(status_url)
