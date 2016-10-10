@@ -80,7 +80,7 @@ class RedshiftToS3Transfer(BaseOperator):
         column_names = (', ').join(map(lambda c: "\\'{0}\\'".format(c), columns))
         column_castings = (', ').join(map(lambda c: "CAST({0} AS text) AS {0}".format(c), columns))
 
-        unload_query = """
+        unload_query =  """
                             UNLOAD ('SELECT {0} 
                             UNION ALL
                             SELECT {1} FROM {2}.{3}') 
@@ -95,6 +95,6 @@ class RedshiftToS3Transfer(BaseOperator):
                         """.format(column_names, column_castings, self.schema, self.table, 
                             self.s3_bucket, self.s3_key, a_key, s_key)
 
-        logging.info('Executing query...')
+        logging.info('Executing UNLOAD command...')
         self.hook.run(unload_query, self.autocommit)
-        logging.info("Query finished...")
+        logging.info("UNLOAD complete...")
